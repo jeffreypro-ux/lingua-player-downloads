@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>墨词 · 沉浸式双语视频</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="ambient ambient-one"></div>
+  <div class="ambient ambient-two"></div>
+
+  <header class="topbar">
+    <a class="brand" href="#" aria-label="墨词首页">
+      <span class="brand-mark">墨</span>
+      <span><b>墨词</b><small>LINGUA PLAYER</small></span>
+    </a>
+    <div class="top-actions">
+      <button id="enginePill" class="local-pill"><i></i><span>本地运行</span></button>
+      <button id="settingsButton" class="icon-button" aria-label="设置" title="设置">•••</button>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section id="welcome" class="welcome">
+      <div class="eyebrow">把喜欢的视频，变成你的英语课</div>
+      <h1>听见语境，<em>记住表达。</em></h1>
+      <p>上传视频，自动生成中英字幕。像听歌一样逐句学习，把注意力留给真正值得记住的词。</p>
+
+      <label class="drop-zone" id="dropZone">
+        <input id="videoInput" type="file" accept="video/*" hidden />
+        <span class="upload-icon">↥</span>
+        <span class="drop-title">拖入视频，或点击选择</span>
+        <span class="drop-note"><b>最推荐 MP4（H.264 + AAC）</b> · 也支持 MOV、WebM；MKV/H.265 可能需要转换</span>
+      </label>
+
+      <details class="format-guide">
+        <summary>查看视频格式建议</summary>
+        <div class="format-grid">
+          <div class="best"><strong>MP4 · H.264 + AAC</strong><span>兼容性最好，推荐优先使用</span></div>
+          <div><strong>MOV · WebM</strong><span>通常可以直接播放和识别</span></div>
+          <div><strong>MKV · H.265/HEVC · DTS</strong><span>可以提取声音，但部分浏览器无法显示画面</span></div>
+        </div>
+        <p>建议单个视频不超过 8GB。1080p 已足够，字幕识别效果主要取决于声音清晰度，与画面分辨率关系不大。</p>
+      </details>
+
+      <div class="welcome-actions">
+        <button id="demoButton" class="text-button">先体验示例 <span>→</span></button>
+        <label class="text-button file-label">导入 SRT 字幕<input id="srtInput" type="file" accept=".srt,.vtt" hidden /></label>
+      </div>
+    </section>
+
+    <section id="studio" class="studio hidden">
+      <div class="studio-header">
+        <div>
+          <span class="overline">正在学习</span>
+          <h2 id="videoTitle">A quiet way to learn</h2>
+        </div>
+        <div class="header-tools">
+          <label class="mini-upload">更换视频<input id="replaceInput" type="file" accept="video/*" hidden /></label>
+          <button id="backButton" class="ghost-button">返回首页</button>
+        </div>
+      </div>
+
+      <div class="workspace">
+        <section class="player-card">
+          <div class="video-stage" id="videoStage">
+            <video id="backdropVideo" class="backdrop-video" muted playsinline aria-hidden="true"></video>
+            <div class="video-shade"></div>
+            <video id="video" class="main-video" playsinline aria-hidden="true"></video>
+            <div id="processingBadge" class="processing-badge hidden"><i></i><span>正在准备字幕</span></div>
+            <div id="demoVisual" class="demo-visual">
+              <div class="orb"></div><div class="demo-word">BREATHE</div>
+            </div>
+            <div class="caption-panel">
+              <div id="englishCaption" class="english-caption"></div>
+              <div id="chineseCaption" class="chinese-caption"></div>
+            </div>
+            <button id="centerPlay" class="center-play" aria-label="播放">▶</button>
+          </div>
+
+          <div class="transport">
+            <div class="progress-row">
+              <span id="currentTime">00:00</span>
+              <input id="progress" type="range" min="0" max="1000" value="0" aria-label="播放进度" />
+              <span id="duration">00:00</span>
+            </div>
+            <div class="control-row">
+              <div class="shortcut"><kbd>←</kbd><span>上一句</span></div>
+              <button id="prevButton" class="round-control" aria-label="上一句">↶</button>
+              <button id="playButton" class="play-control" aria-label="播放">▶</button>
+              <button id="nextButton" class="round-control" aria-label="下一句">↷</button>
+              <div class="shortcut right"><span>下一句</span><kbd>→</kbd></div>
+            </div>
+            <div class="segment-row">
+              <span id="segmentCount">第 1 / 1 句</span>
+              <span><kbd>Space</kbd> 播放 / 暂停</span>
+            </div>
+          </div>
+        </section>
+
+        <aside class="learning-panel">
+          <div class="panel-tabs">
+            <button class="tab active" data-tab="script">逐句</button>
+            <button class="tab" data-tab="words">关键词 <span id="wordCount">0</span></button>
+          </div>
+
+          <div id="scriptTab" class="tab-content active">
+            <div id="transcript" class="transcript"></div>
+          </div>
+
+          <div id="wordsTab" class="tab-content">
+            <div class="level-filter">
+              <button class="level active" data-level="cet4">四级</button>
+              <button class="level active" data-level="cet6">六级</button>
+              <button class="level active" data-level="ielts">雅思</button>
+            </div>
+            <div id="wordList" class="word-list"></div>
+          </div>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status"></div>
+
+  <div id="settingsModal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <section class="setup-modal">
+      <button id="closeSettings" class="modal-close" aria-label="关闭">×</button>
+      <span class="overline">首次使用准备</span>
+      <h2 id="settingsTitle">一次下载，之后完全离线</h2>
+      <p class="setup-lead">识别模型保存在这台电脑上。电影、声音和字幕不会离开你的设备。</p>
+      <div class="model-card selected">
+        <div class="model-icon">W</div>
+        <div class="model-copy"><div><strong>英文识别 + 中文翻译</strong><span class="recommend">推荐</span></div><p>适合课程、访谈和大多数英语电影</p></div>
+        <div class="model-size">合计约 1 GB</div>
+      </div>
+      <div class="setup-facts">
+        <div><span>下载次数</span><strong>仅首次</strong></div>
+        <div><span>网络要求</span><strong>安装后无需联网</strong></div>
+        <div><span>视频处理</span><strong>始终在本机</strong></div>
+      </div>
+      <div id="engineChecklist" class="engine-checklist">
+        <div data-part="ffmpeg"><i></i><span>视频处理组件</span><b>待准备</b></div>
+        <div data-part="whisper"><i></i><span>语音识别组件</span><b>待准备</b></div>
+        <div data-part="model"><i></i><span>英语识别模型</span><b>待准备</b></div>
+        <div data-part="translation"><i></i><span>英译中模型</span><b>待准备</b></div>
+      </div>
+      <button id="prepareEngine" class="primary-action">一键下载并安装（约 1GB）</button>
+      <div id="installProgress" class="install-progress hidden" aria-live="polite">
+        <div><span id="installLabel">正在准备下载</span><b id="installPercent">0%</b></div>
+        <div class="progress-track"><i id="installBar"></i></div>
+        <p>下载期间可以保留此页面，完成后将自动检查。</p>
+      </div>
+      <button id="manualGuideButton" class="manual-guide-action">下载遇到问题？查看手动安装</button>
+      <div id="installGuide" class="install-guide hidden">
+        <div class="install-step"><b>1</b><div><strong>下载英语识别模型</strong><p>约 466MB，下载后保留文件名 <code>ggml-small.en.bin</code></p><a href="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin?download=true" target="_blank" rel="noopener">下载模型</a></div></div>
+        <div class="install-step"><b>2</b><div><strong>下载 Whisper Windows 版</strong><p>进入官方发布页，选择 <code>whisper-bin-x64.zip</code>。</p><a href="https://github.com/ggml-org/whisper.cpp/releases" target="_blank" rel="noopener">打开 Whisper 官方下载页</a></div></div>
+        <div class="install-step"><b>3</b><div><strong>下载 FFmpeg Windows 版</strong><p>用于从 MP4、MOV、MKV 等视频中提取声音。</p><a href="https://ffmpeg.org/download.html#build-windows" target="_blank" rel="noopener">打开 FFmpeg 官方下载页</a></div></div>
+        <div class="folder-map"><span>将文件分别放入解压后的这些位置：</span><code>tools/models/ggml-small.en.bin</code><code>tools/whisper/whisper-cli.exe</code><code>tools/ffmpeg.exe</code></div>
+        <button id="recheckEngine" class="recheck-action">我已放好，重新检查</button>
+      </div>
+      <button id="laterButton" class="later-action">暂时只体验示例</button>
+      <p id="setupMessage" class="setup-footnote" aria-live="polite">首次约 1GB，包含识别与翻译，安装后无需再次下载。</p>
+    </section>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

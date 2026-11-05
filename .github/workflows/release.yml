@@ -1,0 +1,97 @@
+name: Build Windows installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release-v0.4.0
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Download and cache the offline translation model
+        run: node scripts/prepare-translation.mjs
+
+      - name: Assemble the complete offline application
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stage = Join-Path $PWD 'dist\LinguaPlayer'
+          New-Item -ItemType Directory -Force -Path $stage, "$stage\runtime", "$stage\tools\whisper", "$stage\tools\models" | Out-Null
+
+          Copy-Item server.js, translation.mjs, start.bat, launch.vbs, package.json, package-lock.json, README.md -Destination $stage
+          Copy-Item public, scripts, node_modules -Destination $stage -Recurse
+          New-Item -ItemType Directory -Force -Path "$stage\tools" | Out-Null
+          Copy-Item tools\translation-cache -Destination "$stage\tools\translation-cache" -Recurse
+
+          $nodeVersion = '24.22.1'
+          Invoke-WebRequest "https://nodejs.org/dist/v$nodeVersion/node-v$nodeVersion-win-x64.zip" -OutFile node.zip
+          Expand-Archive node.zip -DestinationPath node-unpacked
+          Copy-Item "node-unpacked\node-v$nodeVersion-win-x64\node.exe" "$stage\runtime\node.exe"
+          Copy-Item "node-unpacked\node-v$nodeVersion-win-x64\LICENSE" "$stage\runtime\NODE-LICENSE.txt"
+
+          Invoke-WebRequest 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl.zip' -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg-unpacked
+          $ffmpeg = Get-ChildItem ffmpeg-unpacked -Filter ffmpeg.exe -Recurse | Select-Object -First 1
+          if (-not $ffmpeg) { throw 'ffmpeg.exe was not found' }
+          Copy-Item $ffmpeg.FullName "$stage\tools\ffmpeg.exe"
+
+          $releases = Invoke-RestMethod 'https://api.github.com/repos/ggml-org/whisper.cpp/releases?per_page=12'
+          $asset = $releases.assets | Where-Object { $_.name -match '^whisper-bin-(win-)?x64\.zip$' } | Select-Object -First 1
+          if (-not $asset) { throw 'Windows x64 Whisper release was not found' }
+          Invoke-WebRequest $asset.browser_download_url -OutFile whisper.zip
+          Expand-Archive whisper.zip -DestinationPath whisper-unpacked
+          $whisper = Get-ChildItem whisper-unpacked -Filter whisper-cli.exe -Recurse | Select-Object -First 1
+          if (-not $whisper) { throw 'whisper-cli.exe was not found' }
+          Copy-Item (Join-Path $whisper.DirectoryName '*') "$stage\tools\whisper" -Recurse -Force
+
+          Invoke-WebRequest 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin?download=true' -OutFile "$stage\tools\models\ggml-small.en.bin"
+          New-Item -ItemType Directory -Force -Path "$stage\data" | Out-Null
+
+      - name: Verify the packaged app
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & 'dist\LinguaPlayer\runtime\node.exe' --check 'dist\LinguaPlayer\server.js'
+          if (-not (Test-Path 'dist\LinguaPlayer\tools\translation-cache\.ready')) { throw 'Translation model marker is missing' }
+          if ((Get-Item 'dist\LinguaPlayer\tools\models\ggml-small.en.bin').Length -lt 100MB) { throw 'Whisper model is incomplete' }
+
+      - name: Build ZIP and one-click installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force release | Out-Null
+          Compress-Archive -Path 'dist\LinguaPlayer' -DestinationPath 'release\Lingua-Player-Portable-v0.4.0.zip' -CompressionLevel Optimal
+          choco install innosetup --yes --no-progress
+          & 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' installer.iss
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = 'v0.4.0'
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --title '墨词 Lingua Player v0.4.0' --notes-file RELEASE_NOTES.md
+          }
+          gh release upload $tag release\Lingua-Player-Setup-v0.4.0.exe release\Lingua-Player-Portable-v0.4.0.zip --clobber

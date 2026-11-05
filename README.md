@@ -46,4 +46,3 @@ tools/models/ggml-small.en.bin
 - 通常可用：MOV、WebM
 - 可用于字幕识别但画面可能无法在浏览器预览：MKV、H.265/HEVC、DTS
 - 单个文件上限：8GB；1080p 已足够，识别效果主要取决于音频清晰度
-
