@@ -1,5 +1,5 @@
 #define MyAppName "墨词 Lingua Player"
-#define MyAppVersion "0.4.1"
+#define MyAppVersion "0.5.0"
 #define MyAppPublisher "Jeffrey"
 #define MyAppExeName "launch.vbs"
 

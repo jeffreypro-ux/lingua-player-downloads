@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: windows-release-v0.4.1
+  group: windows-release-v0.5.0
   cancel-in-progress: false
 
 jobs:
@@ -79,7 +79,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force release | Out-Null
-          Compress-Archive -Path 'dist\LinguaPlayer' -DestinationPath 'release\Lingua-Player-Portable-v0.4.1.zip' -CompressionLevel Optimal
+          Compress-Archive -Path 'dist\LinguaPlayer' -DestinationPath 'release\Lingua-Player-Portable-v0.5.0.zip' -CompressionLevel Optimal
           choco install innosetup --yes --no-progress
           & 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' installer.iss
 
@@ -88,9 +88,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = 'v0.4.1'
+          $tag = 'v0.5.0'
           gh release view $tag 2>$null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --title '墨词 Lingua Player v0.4.1' --notes-file RELEASE_NOTES.md
+            gh release create $tag --title '墨词 Lingua Player v0.5.0' --notes-file RELEASE_NOTES.md
           }
-          gh release upload $tag release\Lingua-Player-Setup-v0.4.1.exe release\Lingua-Player-Portable-v0.4.1.zip --clobber
+          gh release upload $tag release\Lingua-Player-Setup-v0.5.0.exe release\Lingua-Player-Portable-v0.5.0.zip --clobber

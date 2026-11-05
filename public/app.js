@@ -40,6 +40,7 @@ let demoStarted = 0;
 let demoStartTime = 0;
 let objectUrl = null;
 let importedSegments = null;
+let currentVideoFile = null;
 const activeLevels = new Set(['cet4', 'cet6', 'ielts']);
 let engineState = { ready: false, parts: {} };
 
@@ -52,18 +53,20 @@ function showToast(message) {
 
 function openSettings() { $('#settingsModal').classList.remove('hidden'); }
 function closeSettings() { $('#settingsModal').classList.add('hidden'); }
+function openSubtitleModal() { $('#subtitleModal').classList.remove('hidden'); }
+function closeSubtitleModal() { $('#subtitleModal').classList.add('hidden'); }
 
 async function refreshEngineStatus() {
   try { engineState = await fetch('/api/status').then(response => response.json()); }
   catch { engineState = { ready: false, parts: {} }; }
   $('#enginePill').classList.toggle('missing', !engineState.ready);
-  $('#enginePill span').textContent = engineState.ready ? '离线识别已就绪' : '首次设置';
+  $('#enginePill span').textContent = engineState.ready ? 'AI 识别已就绪' : 'AI 识别（可选）';
   $$('#engineChecklist > div').forEach(row => {
     const ready = Boolean(engineState.parts?.[row.dataset.part]);
     row.classList.toggle('ready', ready);
     row.querySelector('b').textContent = ready ? '已就绪' : '待准备';
   });
-  $('#prepareEngine').textContent = engineState.ready ? '离线识别与翻译已准备完成' : '一键下载并安装（约 1GB）';
+  $('#prepareEngine').textContent = engineState.ready ? 'AI 识别与翻译已准备完成' : '准备 AI 识别（约 1GB）';
   return engineState;
 }
 
@@ -258,14 +261,15 @@ async function loadVideo(file) {
   if (!file) return;
   if (objectUrl) URL.revokeObjectURL(objectUrl);
   objectUrl = URL.createObjectURL(file);
+  currentVideoFile = file;
+  importedSegments = null;
   isDemo = false; demoPlaying = false; cancelAnimationFrame(demoFrame);
   els.video.src = objectUrl; els.backdrop.src = objectUrl;
   els.video.muted = false; els.backdrop.muted = true;
   els.demoVisual.classList.add('hidden');
-  segments = importedSegments || [{ start: 0, end: 99999, en: '正在等待本地识别引擎生成字幕…', zh: '也可以先导入 SRT 字幕进行体验。' }];
+  segments = [{ start: 0, end: 99999, en: '视频已就绪，请添加字幕', zh: '导入现成字幕只需几秒，也可以选择本地 AI 自动生成。' }];
   showStudio(file.name.replace(/\.[^.]+$/, ''));
-  if (importedSegments) showToast('视频已载入，并应用导入的字幕');
-  else await autoTranscribe(file);
+  openSubtitleModal();
 }
 
 async function autoTranscribe(file) {
@@ -285,7 +289,7 @@ async function autoTranscribe(file) {
         if (!state.label) return;
         const message = `${state.label}${state.progress ? ` · ${state.progress}%` : ''}`;
         els.processing.querySelector('span').textContent = message;
-        if (segments.length === 1 && segments[0].en.includes('本地识别')) {
+        if (segments.length === 1 && !importedSegments) {
           segments[0].en = message;
           segments[0].zh = state.stage === 'recognizing' ? '长视频在普通电脑上可能需要较长时间，请保持此页面打开。' : '完成后会自动显示中英双语字幕。';
           renderTranscript(); renderWords();
@@ -328,32 +332,105 @@ function parseSubtitles(text) {
     const timelineIndex = lines.findIndex(line => line.includes('-->'));
     if (timelineIndex < 0) return null;
     const [from, to] = lines[timelineIndex].split('-->').map(v => v.trim().split(' ')[0]);
-    const content = lines.slice(timelineIndex + 1).map(line => line.replace(/<[^>]+>/g, '')).filter(Boolean);
-    const en = content.find(line => /[A-Za-z]/.test(line)) || content[0] || '';
-    const zh = content.find(line => /[\u3400-\u9fff]/.test(line)) || '';
-    return { start: parseTimestamp(from), end: parseTimestamp(to), en, zh };
+    const content = lines.slice(timelineIndex + 1).map(cleanSubtitleText).filter(Boolean);
+    const languages = splitSubtitleLanguages(content);
+    return { start: parseTimestamp(from), end: parseTimestamp(to), en: languages.en || content.join(' '), zh: languages.zh, text: content.join(' ') };
   }).filter(Boolean);
 }
 
-async function importSrt(file) {
+function cleanSubtitleText(value) {
+  return value.replace(/<[^>]+>/g, '').replace(/\{\\[^}]+\}/g, '').replace(/\\N/gi, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function splitSubtitleLanguages(lines) {
+  const english = [];
+  const chinese = [];
+  for (const line of lines) {
+    const hasEnglish = /[A-Za-z]/.test(line);
+    const hasChinese = /[\u3400-\u9fff]/.test(line);
+    if (hasEnglish && hasChinese) {
+      const en = line.replace(/[\u3400-\u9fff]/g, '').replace(/[，。！？；：“”‘’、…]/g, ' ').replace(/\s+/g, ' ').trim();
+      const zh = (line.match(/[\u3400-\u9fff][\u3400-\u9fff，。！？；：“”‘’、…—\s]*/g) || []).join(' ').trim();
+      if (en) english.push(en);
+      if (zh) chinese.push(zh);
+    } else if (hasEnglish) english.push(line);
+    else if (hasChinese) chinese.push(line);
+  }
+  return { en: english.join(' '), zh: chinese.join(' ') };
+}
+
+function parseAssSubtitles(text) {
+  const lines = text.replace(/\r/g, '').split('\n');
+  let fields = [];
+  const result = [];
+  for (const line of lines) {
+    if (/^Format:/i.test(line)) fields = line.slice(line.indexOf(':') + 1).split(',').map(item => item.trim().toLowerCase());
+    if (!/^Dialogue:/i.test(line) || !fields.length) continue;
+    const raw = line.slice(line.indexOf(':') + 1).trim();
+    const values = raw.split(',');
+    if (values.length > fields.length) values.splice(fields.length - 1, values.length - fields.length + 1, values.slice(fields.length - 1).join(','));
+    const row = Object.fromEntries(fields.map((field, index) => [field, values[index] || '']));
+    const contentLines = (row.text || '').split(/\\N/gi).map(cleanSubtitleText).filter(Boolean);
+    const content = contentLines.join(' ');
+    if (!content) continue;
+    const languages = splitSubtitleLanguages(contentLines);
+    result.push({
+      start: parseTimestamp(row.start), end: parseTimestamp(row.end),
+      en: languages.en || (/^[^\u3400-\u9fff]+$/.test(content) ? content : ''),
+      zh: languages.zh, text: content,
+    });
+  }
+  return result;
+}
+
+async function readSubtitleText(file) {
+  const bytes = await file.arrayBuffer();
+  let text = new TextDecoder('utf-8').decode(bytes);
+  const broken = (text.match(/�/g) || []).length;
+  if (broken > 2) {
+    try { text = new TextDecoder('gb18030').decode(bytes); } catch {}
+  }
+  return text;
+}
+
+async function parseSubtitleFile(file) {
+  const text = await readSubtitleText(file);
+  const parsed = /\.(ass|ssa)$/i.test(file.name) ? parseAssSubtitles(text) : parseSubtitles(text);
+  if (!parsed.length) throw new Error('没有识别到有效字幕');
+  return parsed;
+}
+
+function applySubtitleSegments(nextSegments, message) {
+  importedSegments = nextSegments;
+  segments = nextSegments;
+  currentIndex = 0;
+  closeSubtitleModal();
+  renderTranscript(); renderWords(); updateProgress(getTime());
+  showToast(message || `已导入 ${segments.length} 句字幕`);
+}
+
+async function importBilingualSubtitle(file) {
   if (!file) return;
   try {
-    const parsed = parseSubtitles(await file.text());
-    if (!parsed.length) throw new Error('empty');
-    importedSegments = parsed;
-    segments = parsed;
-    showToast(`已导入 ${parsed.length} 句字幕`);
-    if (!els.studio.classList.contains('hidden')) {
-      renderTranscript(); renderWords(); updateProgress(getTime());
-    } else {
-      showStudio(file.name.replace(/\.(srt|vtt)$/i, ''));
-    }
-  } catch { showToast('没有识别到有效的 SRT / VTT 字幕'); }
+    const parsed = await parseSubtitleFile(file);
+    applySubtitleSegments(parsed, `已导入 ${parsed.length} 句字幕，立即可以学习`);
+  } catch (error) { showToast(error.message || '字幕文件无法读取'); }
 }
 
 function bindFileInput(selector) { $(selector).addEventListener('change', event => loadVideo(event.target.files[0])); }
 bindFileInput('#videoInput'); bindFileInput('#replaceInput');
-$('#srtInput').addEventListener('change', event => importSrt(event.target.files[0]));
+$('#bilingualSubtitleInput').addEventListener('change', event => importBilingualSubtitle(event.target.files[0]));
+$('#subtitleButton').addEventListener('click', openSubtitleModal);
+$('#closeSubtitleModal').addEventListener('click', closeSubtitleModal);
+$('#subtitleModal').addEventListener('click', event => { if (event.target.id === 'subtitleModal') closeSubtitleModal(); });
+$('#aiSubtitleButton').addEventListener('click', async () => {
+  if (!currentVideoFile) return showToast('请先选择视频');
+  closeSubtitleModal();
+  segments = [{ start: 0, end: els.video.duration || 99999, en: '正在启动本地识别…', zh: '长视频可能需要较长时间，建议优先使用现成字幕。' }];
+  importedSegments = null;
+  renderTranscript(); renderWords();
+  await autoTranscribe(currentVideoFile);
+});
 $('#demoButton').addEventListener('click', () => {
   isDemo = true; segments = [...demoSegments]; els.demoVisual.classList.remove('hidden'); showStudio();
 });
@@ -429,7 +506,7 @@ $('#recheckEngine').addEventListener('click', async () => {
   const status = await refreshEngineStatus();
   showToast(status.ready ? '安装成功，离线识别已就绪' : '仍有组件未放到指定位置');
 });
-document.addEventListener('keydown', event => { if (event.code === 'Escape') closeSettings(); });
+document.addEventListener('keydown', event => { if (event.code === 'Escape') { closeSettings(); closeSubtitleModal(); } });
 refreshEngineStatus();
 fetch('/api/install/status').then(response => response.json()).then(state => {
   if (state.running || state.stage !== 'idle') { renderInstallProgress(state); if (state.running) pollInstall(); }

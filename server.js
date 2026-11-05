@@ -221,7 +221,7 @@ async function transcribe(req, res) {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', 'http://127.0.0.1');
-  if (url.pathname === '/api/version' && req.method === 'GET') return json(res, 200, { version: '0.4.1', installApi: true, bundledRuntime: true, offlineTranslation: true });
+  if (url.pathname === '/api/version' && req.method === 'GET') return json(res, 200, { version: '0.5.0', installApi: true, bundledRuntime: true, offlineTranslation: true, subtitleFirst: true });
   if (url.pathname === '/api/status' && req.method === 'GET') return json(res, 200, engineStatus());
   if (url.pathname === '/api/install/status' && req.method === 'GET') return json(res, 200, { ...installState, engine: engineStatus() });
   if (url.pathname === '/api/transcribe/status' && req.method === 'GET') return json(res, 200, transcriptionState);
