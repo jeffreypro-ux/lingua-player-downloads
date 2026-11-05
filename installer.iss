@@ -22,9 +22,6 @@ ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\runtime\node.exe
 SetupLogging=yes
 
-[Languages]
-Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
-
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "快捷方式："; Flags: unchecked
 
@@ -37,3 +34,4 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{sys}\wscript.exe"; Parameters: "
 
 [Run]
 Filename: "{sys}\wscript.exe"; Parameters: """{app}\{#MyAppExeName}"""; Description: "启动 {#MyAppName}"; Flags: nowait postinstall skipifsilent
+
