@@ -269,6 +269,7 @@ async function loadVideo(file) {
 }
 
 async function autoTranscribe(file) {
+  let progressTimer;
   try {
     const status = await refreshEngineStatus();
     if (!status.ready) {
@@ -278,6 +279,19 @@ async function autoTranscribe(file) {
     }
     els.processing.classList.remove('hidden');
     els.processing.querySelector('span').textContent = '正在生成英文字幕';
+    progressTimer = setInterval(async () => {
+      try {
+        const state = await fetch('/api/transcribe/status').then(response => response.json());
+        if (!state.label) return;
+        const message = `${state.label}${state.progress ? ` · ${state.progress}%` : ''}`;
+        els.processing.querySelector('span').textContent = message;
+        if (segments.length === 1 && segments[0].en.includes('本地识别')) {
+          segments[0].en = message;
+          segments[0].zh = state.stage === 'recognizing' ? '长视频在普通电脑上可能需要较长时间，请保持此页面打开。' : '完成后会自动显示中英双语字幕。';
+          renderTranscript(); renderWords();
+        }
+      } catch {}
+    }, 1000);
     const response = await fetch('/api/transcribe', {
       method: 'POST',
       headers: { 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name) },
@@ -291,8 +305,11 @@ async function autoTranscribe(file) {
     renderTranscript(); renderWords(); updateProgress(0);
     showToast(`已生成 ${segments.length} 句英文字幕`);
   } catch (error) {
+    segments = [{ start: 0, end: 99999, en: `字幕生成失败：${error.message || '未知错误'}`, zh: '请重新启动播放器后再试，或先导入 SRT / VTT 字幕。' }];
+    renderTranscript(); renderWords();
     showToast(error.message || '本地识别失败，可以先导入 SRT 字幕');
   } finally {
+    clearInterval(progressTimer);
     els.processing.classList.add('hidden');
   }
 }

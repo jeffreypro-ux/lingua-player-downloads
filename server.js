@@ -18,6 +18,7 @@ const model = process.env.LINGUA_MODEL || path.join(toolsRoot, 'models', 'ggml-s
 const translationMarker = path.join(toolsRoot, 'translation-cache', '.ready');
 const mime = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8' };
 let installState = { running: false, stage: 'idle', label: '', progress: 0, error: null };
+let transcriptionState = { running: false, stage: 'idle', label: '', progress: 0, error: null, startedAt: null };
 
 function json(res, status, body) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -37,11 +38,15 @@ function engineStatus() {
   return { ready: Object.values(parts).every(Boolean), parts };
 }
 
-function run(command, args) {
+function run(command, args, onOutput) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { windowsHide: true });
     let errorText = '';
-    child.stderr.on('data', chunk => { errorText += chunk.toString(); });
+    child.stderr.on('data', chunk => {
+      const text = chunk.toString();
+      errorText += text;
+      if (onOutput) onOutput(text);
+    });
     child.on('error', reject);
     child.on('close', code => code === 0 ? resolve() : reject(new Error(errorText.slice(-1600) || `Process exited with ${code}`)));
   });
@@ -83,14 +88,7 @@ async function findFile(root, fileName) {
 }
 
 async function whisperDownloadUrl() {
-  const response = await fetch('https://api.github.com/repos/ggml-org/whisper.cpp/releases?per_page=12', { headers: { 'User-Agent': 'Lingua-Player/0.3', Accept: 'application/vnd.github+json' } });
-  if (!response.ok) throw new Error('无法获取 Whisper 下载地址');
-  const releases = await response.json();
-  for (const release of releases) {
-    const asset = (release.assets || []).find(item => /^whisper-bin-(?:win-)?x64\.zip$/i.test(item.name));
-    if (asset) return asset.browser_download_url;
-  }
-  throw new Error('没有找到适用于 Windows x64 的 Whisper 安装包');
+  return 'https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.3/whisper-bin-x64.zip';
 }
 
 async function installComponents() {
@@ -146,12 +144,13 @@ async function installComponents() {
   }
 }
 
-async function translateSegments(segments) {
+async function translateSegments(segments, onProgress) {
   const { translateTexts } = await import('./translation.mjs');
   for (let index = 0; index < segments.length; index += 8) {
     const batch = segments.slice(index, index + 8);
     const translations = await translateTexts(batch.map(segment => segment.en));
     translations.forEach((translation, offset) => { batch[offset].zh = translation; });
+    if (onProgress) onProgress(Math.min(100, Math.round((index + batch.length) / segments.length * 100)));
   }
   return segments;
 }
@@ -171,7 +170,7 @@ function parseSrt(text) {
   }).filter(segment => segment && segment.en);
 }
 
-async function receiveFile(req, target) {
+async function receiveFile(req, target, onProgress) {
   await fsp.mkdir(path.dirname(target), { recursive: true });
   const stream = fs.createWriteStream(target, { flags: 'wx' });
   let bytes = 0;
@@ -179,6 +178,7 @@ async function receiveFile(req, target) {
     bytes += chunk.length;
     if (bytes > 8 * 1024 * 1024 * 1024) { stream.destroy(); throw new Error('视频不能超过 8GB'); }
     if (!stream.write(chunk)) await new Promise(resolve => stream.once('drain', resolve));
+    if (onProgress) onProgress(bytes);
   }
   await new Promise((resolve, reject) => stream.end(error => error ? reject(error) : resolve()));
 }
@@ -186,6 +186,7 @@ async function receiveFile(req, target) {
 async function transcribe(req, res) {
   const status = engineStatus();
   if (!status.ready) return json(res, 503, { error: 'engine_missing', status });
+  if (transcriptionState.running) return json(res, 409, { error: 'transcription_busy', message: '已有一个视频正在识别，请等待完成' });
   const jobDir = path.join(jobsRoot, crypto.randomBytes(8).toString('hex'));
   const rawName = decodeURIComponent(req.headers['x-file-name'] || '');
   const safeExt = path.extname(rawName).toLowerCase().replace(/[^.a-z0-9]/g, '') || '.mp4';
@@ -193,13 +194,25 @@ async function transcribe(req, res) {
   const audioFile = path.join(jobDir, 'audio.wav');
   const outputBase = path.join(jobDir, 'result');
   try {
-    await receiveFile(req, videoFile);
+    const totalBytes = Number(req.headers['content-length']) || 0;
+    transcriptionState = { running: true, stage: 'uploading', label: '正在读取视频文件', progress: 1, error: null, startedAt: Date.now() };
+    await receiveFile(req, videoFile, bytes => {
+      transcriptionState.progress = totalBytes ? Math.max(1, Math.min(8, Math.round(bytes / totalBytes * 8))) : 2;
+    });
+    transcriptionState = { ...transcriptionState, stage: 'audio', label: '正在提取音频', progress: 9 };
     await run(ffmpeg, ['-y', '-i', videoFile, '-vn', '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', audioFile]);
-    await run(whisper, ['-m', model, '-f', audioFile, '-l', 'en', '-osrt', '-of', outputBase, '-ml', '90', '-sow', '-np']);
+    transcriptionState = { ...transcriptionState, stage: 'recognizing', label: '正在识别英文语音', progress: 12 };
+    await run(whisper, ['-m', model, '-f', audioFile, '-l', 'en', '-osrt', '-of', outputBase, '-ml', '90', '-sow', '-np'], output => {
+      const matches = [...output.matchAll(/progress\s*=\s*(\d+)%/gi)];
+      if (matches.length) transcriptionState.progress = Math.max(12, Math.min(84, 12 + Math.round(Number(matches.at(-1)[1]) * 0.72)));
+    });
     const segments = parseSrt(await fsp.readFile(`${outputBase}.srt`, 'utf8'));
-    await translateSegments(segments);
+    transcriptionState = { ...transcriptionState, stage: 'translating', label: '正在生成中文字幕', progress: 85 };
+    await translateSegments(segments, progress => { transcriptionState.progress = 85 + Math.round(progress * 0.14); });
+    transcriptionState = { ...transcriptionState, running: false, stage: 'complete', label: `已生成 ${segments.length} 句双语字幕`, progress: 100, error: null };
     json(res, 200, { segments, language: 'en', translation: 'zh-CN' });
   } catch (error) {
+    transcriptionState = { ...transcriptionState, running: false, stage: 'error', label: '字幕生成失败', error: error.message };
     json(res, 500, { error: 'transcription_failed', message: error.message });
   } finally {
     if (jobDir.startsWith(jobsRoot + path.sep)) fsp.rm(jobDir, { recursive: true, force: true }).catch(() => {});
@@ -208,9 +221,10 @@ async function transcribe(req, res) {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', 'http://127.0.0.1');
-  if (url.pathname === '/api/version' && req.method === 'GET') return json(res, 200, { version: '0.4.0', installApi: true, bundledRuntime: true, offlineTranslation: true });
+  if (url.pathname === '/api/version' && req.method === 'GET') return json(res, 200, { version: '0.4.1', installApi: true, bundledRuntime: true, offlineTranslation: true });
   if (url.pathname === '/api/status' && req.method === 'GET') return json(res, 200, engineStatus());
   if (url.pathname === '/api/install/status' && req.method === 'GET') return json(res, 200, { ...installState, engine: engineStatus() });
+  if (url.pathname === '/api/transcribe/status' && req.method === 'GET') return json(res, 200, transcriptionState);
   if (url.pathname === '/api/install' && req.method === 'POST') {
     installComponents();
     return json(res, 202, installState);

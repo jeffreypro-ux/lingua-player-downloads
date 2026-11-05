@@ -1,5 +1,5 @@
 #define MyAppName "墨词 Lingua Player"
-#define MyAppVersion "0.4.0"
+#define MyAppVersion "0.4.1"
 #define MyAppPublisher "Jeffrey"
 #define MyAppExeName "launch.vbs"
 
@@ -34,4 +34,3 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{sys}\wscript.exe"; Parameters: "
 
 [Run]
 Filename: "{sys}\wscript.exe"; Parameters: """{app}\{#MyAppExeName}"""; Description: "启动 {#MyAppName}"; Flags: nowait postinstall skipifsilent
-

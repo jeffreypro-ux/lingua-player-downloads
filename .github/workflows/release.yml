@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: windows-release-v0.4.0
+  group: windows-release-v0.4.1
   cancel-in-progress: false
 
 jobs:
@@ -55,10 +55,7 @@ jobs:
           if (-not $ffmpeg) { throw 'ffmpeg.exe was not found' }
           Copy-Item $ffmpeg.FullName "$stage\tools\ffmpeg.exe"
 
-          $releases = Invoke-RestMethod 'https://api.github.com/repos/ggml-org/whisper.cpp/releases?per_page=12'
-          $asset = $releases.assets | Where-Object { $_.name -match '^whisper-bin-(win-)?x64\.zip$' } | Select-Object -First 1
-          if (-not $asset) { throw 'Windows x64 Whisper release was not found' }
-          Invoke-WebRequest $asset.browser_download_url -OutFile whisper.zip
+          Invoke-WebRequest 'https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.3/whisper-bin-x64.zip' -OutFile whisper.zip
           Expand-Archive whisper.zip -DestinationPath whisper-unpacked
           $whisper = Get-ChildItem whisper-unpacked -Filter whisper-cli.exe -Recurse | Select-Object -First 1
           if (-not $whisper) { throw 'whisper-cli.exe was not found' }
@@ -72,6 +69,8 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           & 'dist\LinguaPlayer\runtime\node.exe' --check 'dist\LinguaPlayer\server.js'
+          & 'dist\LinguaPlayer\tools\whisper\whisper-cli.exe' -h | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Whisper executable failed its startup check: $LASTEXITCODE" }
           if (-not (Test-Path 'dist\LinguaPlayer\tools\translation-cache\.ready')) { throw 'Translation model marker is missing' }
           if ((Get-Item 'dist\LinguaPlayer\tools\models\ggml-small.en.bin').Length -lt 100MB) { throw 'Whisper model is incomplete' }
 
@@ -80,7 +79,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force release | Out-Null
-          Compress-Archive -Path 'dist\LinguaPlayer' -DestinationPath 'release\Lingua-Player-Portable-v0.4.0.zip' -CompressionLevel Optimal
+          Compress-Archive -Path 'dist\LinguaPlayer' -DestinationPath 'release\Lingua-Player-Portable-v0.4.1.zip' -CompressionLevel Optimal
           choco install innosetup --yes --no-progress
           & 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' installer.iss
 
@@ -89,9 +88,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = 'v0.4.0'
+          $tag = 'v0.4.1'
           gh release view $tag 2>$null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --title '墨词 Lingua Player v0.4.0' --notes-file RELEASE_NOTES.md
+            gh release create $tag --title '墨词 Lingua Player v0.4.1' --notes-file RELEASE_NOTES.md
           }
-          gh release upload $tag release\Lingua-Player-Setup-v0.4.0.exe release\Lingua-Player-Portable-v0.4.0.zip --clobber
+          gh release upload $tag release\Lingua-Player-Setup-v0.4.1.exe release\Lingua-Player-Portable-v0.4.1.zip --clobber
